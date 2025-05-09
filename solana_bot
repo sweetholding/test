@@ -1,0 +1,237 @@
+import logging
+import asyncio
+import aiohttp
+import json
+import os
+import nest_asyncio
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from aiohttp import web
+
+TOKEN = "7701492175:AAHvAskxHi2asdQ3iVYohFFrGAM8s3OcrGk"
+ADMIN_ID = 423798633
+USERS_FILE = "users.txt"
+WALLETS_FILE = "wallets.json"
+PORT = 8000
+DEX_LIMITS = {"Jupiter": 10000, "Raydium": 10000}
+DEBUG_MODE = {"enabled": False}
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX", "SOL"}
+
+# --- Users ---
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return []
+    with open(USERS_FILE, "r") as f:
+        return [int(line.strip()) for line in f if line.strip().isdigit()]
+
+def save_user(user_id):
+    users = load_users()
+    if user_id not in users:
+        with open(USERS_FILE, "a") as f:
+            f.write(f"{user_id}\n")
+
+def remove_user(user_id):
+    users = load_users()
+    if user_id in users:
+        users.remove(user_id)
+        with open(USERS_FILE, "w") as f:
+            f.writelines([f"{uid}\n" for uid in users])
+
+# --- Wallets ---
+def load_wallets():
+    if not os.path.exists(WALLETS_FILE):
+        return {}
+    with open(WALLETS_FILE, "r") as f:
+        return json.load(f)
+
+def save_wallets(wallets):
+    with open(WALLETS_FILE, "w") as f:
+        json.dump(wallets, f, indent=2)
+
+# --- Telegram Commands ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    save_user(user_id)
+    await update.message.reply_text("Вы подписаны на уведомления о транзакциях Solana.")
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    remove_user(user_id)
+    await update.message.reply_text("Вы отписались от уведомлений.")
+
+async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if len(context.args) < 3:
+        await update.message.reply_text("Формат: /addwallet <адрес> <порог> <название>")
+        return
+    address, threshold, label = context.args[0], int(context.args[1]), context.args[2]
+    wallets = load_wallets()
+    wallets[address] = {"threshold": threshold, "label": label}
+    save_wallets(wallets)
+    await update.message.reply_text(f"Добавлен кошелек {label} — {address} с порогом {threshold}$")
+
+async def del_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text("Формат: /delwallet <адрес>")
+        return
+    address = context.args[0]
+    wallets = load_wallets()
+    if address in wallets:
+        del wallets[address]
+        save_wallets(wallets)
+        await update.message.reply_text(f"Удален кошелек {address}")
+    else:
+        await update.message.reply_text("Кошелек не найден")
+
+async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    wallets = load_wallets()
+    if not wallets:
+        await update.message.reply_text("Список отслеживаемых кошельков пуст.")
+        return
+    msg = "Отслеживаемые кошельки:\n"
+    for address, info in wallets.items():
+        msg += f"🔹 {info.get('label', 'Без названия')} — {address}\n💰 Мин. сумма: ${info.get('threshold', '❌ нет')}\n"
+    await update.message.reply_text(msg)
+
+async def set_dex_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Формат: /setdexlimit <Jupiter|Raydium> <порог>")
+        return
+    dex, value = context.args[0], int(context.args[1])
+    if dex not in DEX_LIMITS:
+        await update.message.reply_text("Неверное имя DEX. Используй Jupiter или Raydium.")
+        return
+    DEX_LIMITS[dex] = value
+    await update.message.reply_text(f"Порог для {dex} установлен на {value}$")
+
+async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    DEBUG_MODE["enabled"] = not DEBUG_MODE["enabled"]
+    state = "включен" if DEBUG_MODE["enabled"] else "выключен"
+    await update.message.reply_text(f"Debug-режим {state}.")
+
+# --- Notify Users ---
+async def notify_users(message, application):
+    for user_id in load_users():
+        try:
+            await application.bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
+            await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(f"Ошибка отправки {user_id}: {e}")
+
+# --- Handle Helius Transfer ---
+async def handle_transfer(data, application):
+    if isinstance(data, list):
+        data = data[0]
+
+    tx_type = data.get("type")
+    source = data.get("source")
+    signature = data.get("signature")
+
+    if tx_type == "SWAP" and source in DEX_LIMITS:
+        for transfer in data.get("tokenTransfers", []):
+            amount_usd = transfer.get("amountUSD", 0)
+            symbol = transfer.get("tokenSymbol", "")
+            mint = transfer.get("mint")
+            amount_raw = transfer.get("amount", 0)
+            sender = transfer.get("fromUserAccount")
+            receiver = transfer.get("toUserAccount")
+
+            if DEBUG_MODE["enabled"]:
+                await notify_users(f"[DEBUG DEX] {symbol=} {amount_usd=} {sender=} → {receiver=}", application)
+
+            if symbol.upper() in STABLECOINS or amount_usd == 0:
+                continue
+
+            if amount_usd >= DEX_LIMITS[source]:
+                msg = (
+                    f"💱 *Сделка через {source}*\n"
+                    f"Токен: `{symbol}`\n"
+                    f"Адрес токена: `{mint}`\n"
+                    f"От: `{sender}`\n"
+                    f"Кому: `{receiver}`\n"
+                    f"Сумма: ${amount_usd:,.2f} (≈ {amount_raw} токенов)\n"
+                    f"🔎 [Посмотреть в Solscan](https://solscan.io/tx/{signature})"
+                )
+                await notify_users(msg, application)
+        return
+
+    wallets = load_wallets()
+    for transfer in data.get("tokenTransfers", []):
+        mint = transfer.get("mint")
+        symbol = transfer.get("tokenSymbol", "")
+        sender = transfer.get("fromUserAccount")
+        receiver = transfer.get("toUserAccount")
+        amount_usd = transfer.get("amountUSD", 0)
+        amount_raw = transfer.get("amount", 0)
+
+        if DEBUG_MODE["enabled"]:
+            await notify_users(f"[DEBUG WALLET] {symbol=} {amount_usd=} {sender=} → {receiver=}", application)
+
+        if symbol.upper() in STABLECOINS or amount_usd == 0:
+            continue
+
+        for addr in [sender, receiver]:
+            wallet_info = wallets.get(addr)
+            if wallet_info:
+                threshold = wallet_info.get("threshold", 0)
+                label = wallet_info.get("label", "Неизвестно")
+                if amount_usd >= threshold:
+                    msg = (
+                        f"🔔 *Новая транзакция в Solana*\n"
+                        f"Биржа: *{label}*\n"
+                        f"Токен: `{symbol}`\n"
+                        f"Адрес токена: `{mint}`\n"
+                        f"От: `{sender}`\n"
+                        f"Кому: `{receiver}`\n"
+                        f"Сумма: ${amount_usd:,.2f} (≈ {amount_raw} токенов)\n"
+                        f"🔎 [Посмотреть в Solscan](https://solscan.io/tx/{signature})"
+                    )
+                    await notify_users(msg, application)
+                    break
+
+# --- Webhook Receiver ---
+async def webhook_handler(request):
+    data = await request.json()
+    request.app["bot_loop"].create_task(handle_transfer(data, request.app["application"]))
+    return web.Response(text="OK")
+
+# --- Main ---
+async def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("addwallet", add_wallet))
+    app.add_handler(CommandHandler("delwallet", del_wallet))
+    app.add_handler(CommandHandler("wallets", list_wallets))
+    app.add_handler(CommandHandler("setdexlimit", set_dex_limit))
+    app.add_handler(CommandHandler("debug", debug))
+
+    web_app = web.Application()
+    web_app["application"] = app
+    web_app["bot_loop"] = asyncio.get_event_loop()
+    web_app.router.add_post("/webhook", webhook_handler)
+
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+    await site.start()
+    logger.info(f"✅ Webhook сервер запущен на порту {PORT}")
+
+    await app.run_polling()
+
+if __name__ == '__main__':
+    nest_asyncio.apply()
+    asyncio.run(main())
