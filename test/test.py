@@ -10,6 +10,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = "7701492175:AAHvAskxHi2asdQ3iVYohFFrGAM8s3OcrGk"
 ADMIN_ID = 423798633
+GROUP_CHAT_ID = -1002540099411
 USERS_FILE = "users.txt"
 WALLETS_FILE = "wallets.json"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
@@ -37,6 +38,11 @@ async def get_cached_sol_price():
 
 async def notify_users(msg, application):
     try:
+        await application.bot.send_message(chat_id=GROUP_CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"❌ Ошибка отправки в группу: {e}")
+
+    try:
         with open(USERS_FILE, "r") as f:
             user_ids = [int(line.strip()) for line in f if line.strip()]
     except:
@@ -44,7 +50,6 @@ async def notify_users(msg, application):
     for uid in user_ids:
         try:
             await application.bot.send_message(chat_id=uid, text=msg, parse_mode="Markdown")
-            print(f"✅ Отправлено пользователю {uid}")
         except Exception as e:
             print(f"❌ Ошибка отправки пользователю {uid}: {e}")
 
@@ -55,35 +60,71 @@ async def handle_transfer(data, application):
 
         sol_price = await get_cached_sol_price()
         signature = data.get("signature", "-")
+        events = data.get("events", {})
+        swap_info = events.get("swap", {})
+        transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
-        for entry in account_data:
-            sender = entry.get("account", "")
-            native_change = entry.get("nativeBalanceChange", 0)
-            amount_sol = native_change / 1_000_000_000
-            amount_usd = amount_sol * sol_price
-            if abs(amount_usd) < 1:
-                continue
-            label = "-"
-            symbol = "SOL"
-            mint = "-"
-            receiver = "-"
-            msg = (
-                f"⚠️ *Новая транзакция в Solana*\n"
-                f"📊Биржа: *{label}*\n"
-                f"🎯Токен: `{symbol}`\n"
-                f"📟Адрес токена: `{mint}`\n"
-                f"🔁От: `{sender}`\n"
-                f"➡️Кому: `{receiver}`\n"
-                f"💰Сумма: ${amount_usd:,.2f} (≈ {amount_sol:.4f} SOL)\n"
-                f"🔗 [Посмотреть в Solscan](https://solscan.io/tx/{signature})"
-            )
-            await notify_users(msg, application)
-            break
+
+        direction = "unknown"
+        label = "-"
+        symbol = "SPL"
+        mint = "-"
+        sender = "-"
+        receiver = "-"
+        usd_amount = 0
+
+        if swap_info:
+            direction = "swap"
+            native_input = swap_info.get("nativeInput", {})
+            fee = swap_info.get("fee", 0)
+            amount_in_sol = native_input.get("amount", 0) / 1_000_000_000
+            usd_amount = amount_in_sol * sol_price + (fee / 1_000_000_000) * sol_price
+            sender = swap_info.get("source", "-")
+            receiver = swap_info.get("destination", "-")
+            mint = native_input.get("mint", "-")
+
+        elif transfers:
+            for tr in transfers:
+                mint = tr.get("mint", "-")
+                symbol = tr.get("tokenSymbol", "SPL")
+                sender = tr.get("fromUserAccount", "-")
+                receiver = tr.get("toUserAccount", "-")
+                direction = "transfer"
+                break
+
+        elif account_data:
+            for entry in account_data:
+                native_change = entry.get("nativeBalanceChange", 0)
+                amount_sol = native_change / 1_000_000_000
+                usd_amount = abs(amount_sol * sol_price)
+                sender = entry.get("account", "-")
+                direction = "sol"
+                symbol = "SOL"
+                mint = "-"
+                break
+
+        if usd_amount < 1:
+            return
+
+        msg = (
+            f"⚠️ *Новая транзакция в Solana*\n"
+            f"📊Тип: *{direction}*\n"
+            f"🎯Токен: `{symbol}`\n"
+            f"📟Адрес токена: `{mint}`\n"
+            f"🔁От: `{sender}`\n"
+            f"➡️Кому: `{receiver}`\n"
+            f"💰Сумма: ${usd_amount:,.2f} (по цене SOL: ${sol_price})\n"
+            f"🔗 [Посмотреть в Solscan](https://solscan.io/tx/{signature})"
+        )
+        await notify_users(msg, application)
     except Exception as e:
         print(f"[handle_transfer error] {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    if uid != ADMIN_ID:
+        await update.message.reply_text("⛔ Только админ может использовать этого бота.")
+        return
     try:
         with open(USERS_FILE, "a+") as f:
             f.seek(0)
@@ -121,6 +162,8 @@ async def deluser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
     if len(context.args) != 2:
         return await update.message.reply_text("Формат: /addwallet адрес лимит")
     wallet, limit = context.args
@@ -135,6 +178,8 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Добавлен: {wallet} с лимитом {limit} USD")
 
 async def del_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
     if len(context.args) != 1:
         return await update.message.reply_text("Формат: /delwallet адрес")
     wallet = context.args[0]
@@ -152,6 +197,8 @@ async def del_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ошибка при удалении.")
 
 async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
     try:
         with open(WALLETS_FILE, "r") as f:
             wallets = json.load(f)
@@ -159,21 +206,6 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
     except:
         await update.message.reply_text("Кошельки не найдены.")
-
-async def set_dex_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Формат: /setdexlimit пока не реализован.")
-
-async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Режим отладки активирован.")
-
-async def pause_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏸️ Бот приостановлен.")
-
-async def resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("▶️ Бот возобновлён.")
-
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⛔ Бот остановлен.")
 
 async def webhook_handler(request):
     print("📥 Webhook получен")
@@ -190,7 +222,7 @@ async def create_webhook_handler(request):
     webhook_url = f"https://{origin}/webhook"
     payload = {
         "webhookURL": webhook_url,
-        "transactionTypes": ["TRANSFER"],
+        "transactionTypes": ["TRANSFER", "SWAP"],
         "webhookType": "enhanced",
         "accountAddresses": [],
         "authHeader": AUTH_TOKEN
@@ -212,11 +244,6 @@ async def start_bot():
     app.add_handler(CommandHandler("addwallet", add_wallet))
     app.add_handler(CommandHandler("delwallet", del_wallet))
     app.add_handler(CommandHandler("wallets", list_wallets))
-    app.add_handler(CommandHandler("setdexlimit", set_dex_limit))
-    app.add_handler(CommandHandler("debug", debug))
-    app.add_handler(CommandHandler("pausebot", pause_bot))
-    app.add_handler(CommandHandler("resumebot", resume_bot))
-    app.add_handler(CommandHandler("stop", stop))
 
     webhook_path = "/telegram"
     webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
@@ -230,14 +257,13 @@ async def start_bot():
     web_app["bot_loop"] = asyncio.get_event_loop()
     web_app.router.add_post("/webhook", webhook_handler)
     web_app.router.add_post("/create-webhook", create_webhook_handler)
-    web_app.router.add_post(webhook_path, app.webhook_handler())  # 📌 Добавляем обработчик Telegram
+    web_app.router.add_post(webhook_path, app.webhook_handler())
 
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, port=8000)
     await site.start()
     print("🟢 Сервер запущен на порту 8000")
-
     await notify_users("✅ Бот запущен и работает на Render.", app)
 
 def main():
