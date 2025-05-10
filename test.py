@@ -205,7 +205,7 @@ async def create_webhook_handler(request):
             print("✅ Webhook создан:", result)
             return web.json_response(result)
 
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -227,19 +227,17 @@ def main():
     web_app.router.add_post("/create-webhook", create_webhook_handler)
 
     runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, port=8000)
+    await site.start()
+    print("🟢 Webhook-сервер запущен на порту 8000")
 
-    async def start_web():
-        await runner.setup()
-        site = web.TCPSite(runner, port=8000)
-        await site.start()
-        print("🟢 Webhook-сервер запущен на порту 8000")
-        await notify_users("🔔 Бот запущен и готов принимать Webhook от Helius.", app)
-
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_web())
-
-    print("▶️ Запуск Telegram-бота через polling...")
-    app.run_polling()
+    await app.initialize()
+    await app.start()
+    await notify_users("✅ Бот запущен и принимает Webhook от Helius.", app)
+    await app.updater.start_polling()  # если нужен polling — но в твоём случае лучше удалить
+    await app.updater.idle()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
