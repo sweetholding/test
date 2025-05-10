@@ -205,9 +205,7 @@ async def create_webhook_handler(request):
             print("✅ Webhook создан:", result)
             return web.json_response(result)
 
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
+async def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("users", users))
     app.add_handler(CommandHandler("deluser", deluser))
@@ -220,26 +218,32 @@ def main():
     app.add_handler(CommandHandler("resumebot", resume_bot))
     app.add_handler(CommandHandler("stop", stop))
 
+    webhook_path = "/telegram"
+    webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
+
+    await app.initialize()
+    await app.bot.set_webhook(webhook_url)
+    await app.start()
+
     web_app = web.Application()
     web_app["application"] = app
     web_app["bot_loop"] = asyncio.get_event_loop()
     web_app.router.add_post("/webhook", webhook_handler)
     web_app.router.add_post("/create-webhook", create_webhook_handler)
+    web_app.router.add_post(webhook_path, app.webhook_handler())  # 📌 Добавляем обработчик Telegram
 
     runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, port=8000)
+    await site.start()
+    print("🟢 Сервер запущен на порту 8000")
 
-    async def start_web():
-        await runner.setup()
-        site = web.TCPSite(runner, port=8000)
-        await site.start()
-        print("🟢 Webhook-сервер запущен на порту 8000")
-        await notify_users("🔔 Бот запущен и готов принимать Webhook от Helius.", app)
+    await notify_users("✅ Бот запущен и работает на Render.", app)
 
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_web())
-
-    print("▶️ Запуск Telegram-бота через polling...")
-    app.run_polling()
+def main():
+    global app
+    app = ApplicationBuilder().token(TOKEN).build()
+    asyncio.run(start_bot())
 
 if __name__ == "__main__":
     main()
