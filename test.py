@@ -228,9 +228,11 @@ async def main():
 
     runner = web.AppRunner(web_app)
     await runner.setup()
-    site = web.TCPSite(runner, port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    site = web.TCPSite(runner, port=port)
     await site.start()
-    print("🟢 Webhook-сервер запущен на порту 8000")
+    print(f"🟢 Webhook-сервер запущен на порту {port}")
+
 
     await app.initialize()
     await app.start()
