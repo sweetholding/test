@@ -259,16 +259,17 @@ async def start_bot():
     web_app.router.add_post("/create-webhook", create_webhook_handler)
     web_app.router.add_post(webhook_path, app.webhook_handler())
 
-        runner = web.AppRunner(web_app)
+    runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, port=8000)
-    await site.start()  # ← исправлен отступ
+    await site.start()  # ← должен быть на том же уровне, что и остальные
 
     print("🟢 Сервер запущен на порту 8000")
     await notify_users("✅ Бот запущен и работает на Render.", app)
 
     while True:
         await asyncio.sleep(3600)
+
 
 def main():
     global app
