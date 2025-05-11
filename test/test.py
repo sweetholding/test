@@ -132,6 +132,7 @@ async def webhook_handler(request):
     return web.Response(text="OK")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"📥 Получена команда /start от {update.effective_user.id}")
     uid = update.effective_user.id
     if uid != ADMIN_ID:
         await update.message.reply_text("⛔ Только админ может использовать этого бота.")
@@ -153,7 +154,6 @@ async def start_bot():
     print(f"📡 Webhook установлен: {webhook_url}")
     await app.start()
 
-
     web_app = web.Application()
     web_app["application"] = app
     web_app["bot_loop"] = asyncio.get_event_loop()
@@ -167,6 +167,7 @@ async def start_bot():
 
     print("🟢 Сервер запущен на порту 8000")
     await notify_users("✅ Бот запущен и работает на Render.", app)
+    print("🚀 Бот запущен")
 
     while True:
         await asyncio.sleep(3600)
