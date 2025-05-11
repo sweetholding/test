@@ -150,7 +150,9 @@ async def start_bot():
 
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
+    print(f"📡 Webhook установлен: {webhook_url}")
     await app.start()
+
 
     web_app = web.Application()
     web_app["application"] = app
