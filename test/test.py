@@ -15,14 +15,26 @@ HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 
 sol_price_cache = {"price": None, "last_updated": 0}
 
+STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
+STABLECOIN_MINTS = {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",  # USDT
+    "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",  # USDH
+    "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",  # UXD
+    "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",  # DAI
+    "EaWXmTJEo9u3sxVcqBFVyUVJ7BQ3tj56b2dcHzURkNfG",  # USDP
+    "2QYdQ2Tz2wmu9Xc9e1KD1TV6koEbnKRTvnrpK21FyuTL",  # TUSD
+    "FR87nWEUxVgerFGhZM8Y4AggKGLnaXswr1Pd8wZ4kZcp",  # FRAX
+}
+
 wallet_limits = {
     "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9": ("binance", 100000),
     "AC5RDfQFmDS1deWZos921JfqscXdByf8BKHs5ACWjtW2": ("bybit", 100000),
-    "FpwQQhQQoEaVu3WU2qZMfF1hx48YyfwsLoRgXG83E99Q": ("coinbace", 100000),
+    "FpwQQhQQoEaVu3WU2qZMfF1hx48YyfwsLoRgXG83E99Q": ("coinbase", 100000),
     "ASTyfSima4LLAdDgoFGkgqoKowG1LZFDr9fAQrg7iaJZ": ("mex", 100000),
     "FxteHmLwG9nk1eL4pjNve3Eub2goGkkz6g6TbvdmW46a": ("bitfinex", 100000),
     "FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5": ("kraken", 100000),
-    "BmFdpraQhkiDQE6SnfG5omcA1VwzqfXrwtNYBwWTymy6": ("cukoin", 100000),
+    "BmFdpraQhkiDQE6SnfG5omcA1VwzqfXrwtNYBwWTymy6": ("kucoin", 100000),
     "C68a6RCGLiPskbPYtAcsCjhG8tfTWYcoB4JjCrXFdqyo": ("okx", 100000),
 }
 
@@ -73,6 +85,7 @@ async def handle_transfer(data, application):
         sender = "-"
         receiver = "-"
         usd_amount = 0
+        token_amount = None
 
         if transfers:
             for tr in transfers:
@@ -80,6 +93,16 @@ async def handle_transfer(data, application):
                 symbol = tr.get("tokenSymbol", "SPL")
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
+
+                if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
+                    return
+
+                native_amount = float(tr.get("nativeAmount", 0)) / 1_000_000_000
+                usd_amount = abs(native_amount * sol_price)
+
+                amount_info = tr.get("tokenAmount", {})
+                token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+
                 break
 
         elif account_data:
@@ -110,8 +133,10 @@ async def handle_transfer(data, application):
 
         arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
 
+        token_info = f"{token_amount:,.2f} {symbol}" if token_amount else symbol
+
         msg = (
-            f"🔍 {symbol} on Solana\n"
+            f"🔍 {token_info} on Solana\n"
             f"💰 {usd_amount:,.0f}$\n"
             f"👇 `{sender}`\n"
             f"👆 `{receiver}`\n"
