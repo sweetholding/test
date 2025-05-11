@@ -2,7 +2,6 @@ import aiohttp
 import asyncio
 import time
 import json
-import logging
 import os
 from aiohttp import web
 from telegram import Update
@@ -69,7 +68,6 @@ async def handle_transfer(data, application):
         transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
 
-        direction = "unknown"
         symbol = "SPL"
         mint = "-"
         sender = "-"
