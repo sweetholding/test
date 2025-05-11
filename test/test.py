@@ -1,7 +1,6 @@
 import aiohttp
 import asyncio
 import time
-import json
 import os
 from aiohttp import web
 from telegram import Update
@@ -17,14 +16,14 @@ sol_price_cache = {"price": None, "last_updated": 0}
 
 STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
-    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",  # USDT
-    "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",  # USDH
-    "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",  # UXD
-    "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",  # DAI
-    "EaWXmTJEo9u3sxVcqBFVyUVJ7BQ3tj56b2dcHzURkNfG",  # USDP
-    "2QYdQ2Tz2wmu9Xc9e1KD1TV6koEbnKRTvnrpK21FyuTL",  # TUSD
-    "FR87nWEUxVgerFGhZM8Y4AggKGLnaXswr1Pd8wZ4kZcp",  # FRAX
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",
+    "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",
+    "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",
+    "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",
+    "EaWXmTJEo9u3sxVcqBFVyUVJ7BQ3tj56b2dcHzURkNfG",
+    "2QYdQ2Tz2wmu9Xc9e1KD1TV6koEbnKRTvnrpK21FyuTL",
+    "FR87nWEUxVgerFGhZM8Y4AggKGLnaXswr1Pd8wZ4kZcp",
 }
 
 wallet_limits = {
@@ -37,6 +36,8 @@ wallet_limits = {
     "BmFdpraQhkiDQE6SnfG5omcA1VwzqfXrwtNYBwWTymy6": ("kucoin", 10),
     "C68a6RCGLiPskbPYtAcsCjhG8tfTWYcoB4JjCrXFdqyo": ("okx", 10),
 }
+
+app = ApplicationBuilder().token(TOKEN).build()
 
 async def get_cached_sol_price():
     now = time.time()
@@ -102,7 +103,6 @@ async def handle_transfer(data, application):
 
                 amount_info = tr.get("tokenAmount", {})
                 token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
-
                 break
 
         elif account_data:
@@ -132,7 +132,6 @@ async def handle_transfer(data, application):
             return
 
         arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
-
         token_info = f"{token_amount:,.2f} {symbol}" if token_amount else symbol
 
         msg = (
@@ -173,7 +172,6 @@ async def start_bot():
 
     webhook_path = "/telegram"
     webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
-
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
     print(f"📡 Webhook установлен: {webhook_url}")
@@ -198,8 +196,6 @@ async def start_bot():
         await asyncio.sleep(3600)
 
 def main():
-    global app
-    app = ApplicationBuilder().token(TOKEN).build()
     asyncio.run(start_bot())
 
 if __name__ == "__main__":
