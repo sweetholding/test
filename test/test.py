@@ -98,11 +98,9 @@ async def handle_transfer(data, application):
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
                     return
 
-                native_amount = float(tr.get("nativeAmount", 0)) / 1_000_000_000
-                usd_amount = abs(native_amount * sol_price)
-
                 amount_info = tr.get("tokenAmount", {})
                 token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+                usd_amount = token_amount * sol_price
                 break
 
         elif account_data:
@@ -165,13 +163,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f.seek(0)
         if str(uid) not in f.read():
             f.write(f"{uid}\n")
-    await update.message.reply_text("✅ Подписка активна.")
+    await update.message.reply_text("✅ Подписка активна рендер.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
 
     webhook_path = "/telegram"
     webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
+
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
     print(f"📡 Webhook установлен: {webhook_url}")
@@ -181,16 +180,16 @@ async def start_bot():
     web_app["application"] = app
     web_app["bot_loop"] = asyncio.get_event_loop()
     web_app.router.add_post("/webhook", webhook_handler)
-    web_app.router.add_post(webhook_path, app.webhook_handler())
+    web_app.router.add_post(webhook_path, webhook_handler)
 
     runner = web.AppRunner(web_app)
     await runner.setup()
-    site = web.TCPSite(runner, port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    site = web.TCPSite(runner, port=port)
     await site.start()
 
-    print("🟢 Сервер запущен на порту 8000")
+    print("🟢 Сервер запущен")
     await notify_users("✅ Бот запущен и работает на Render.", app)
-    print("🚀 Бот запущен")
 
     while True:
         await asyncio.sleep(3600)
