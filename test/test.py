@@ -13,8 +13,6 @@ ADMIN_ID = 423798633
 GROUP_CHAT_ID = -1002540099411
 USERS_FILE = "users.txt"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
-AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
-STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 
 sol_price_cache = {"price": None, "last_updated": 0}
 
@@ -68,8 +66,6 @@ async def handle_transfer(data, application):
 
         sol_price = await get_cached_sol_price()
         signature = data.get("signature", "-")
-        events = data.get("events", {})
-        swap_info = events.get("swap", {})
         transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
 
@@ -80,23 +76,12 @@ async def handle_transfer(data, application):
         receiver = "-"
         usd_amount = 0
 
-        if swap_info:
-            direction = "swap"
-            native_input = swap_info.get("nativeInput", {})
-            fee = swap_info.get("fee", 0)
-            amount_in_sol = native_input.get("amount", 0) / 1_000_000_000
-            usd_amount = amount_in_sol * sol_price + (fee / 1_000_000_000) * sol_price
-            sender = swap_info.get("source", "-")
-            receiver = swap_info.get("destination", "-")
-            mint = native_input.get("mint", "-")
-
-        elif transfers:
+        if transfers:
             for tr in transfers:
                 mint = tr.get("mint", "-")
                 symbol = tr.get("tokenSymbol", "SPL")
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
-                direction = "transfer"
                 break
 
         elif account_data:
@@ -105,10 +90,12 @@ async def handle_transfer(data, application):
                 amount_sol = native_change / 1_000_000_000
                 usd_amount = abs(amount_sol * sol_price)
                 sender = entry.get("account", "-")
-                direction = "sol"
                 symbol = "SOL"
-                mint = "-"
                 break
+
+        if usd_amount == 0:
+            amount_raw = data.get("events", {}).get("nativeTransfer", {}).get("amount", 0)
+            usd_amount = abs(amount_raw / 1_000_000_000 * sol_price)
 
         involved_wallet = None
         for address in [sender, receiver]:
@@ -119,7 +106,7 @@ async def handle_transfer(data, application):
         if not involved_wallet:
             return
 
-        exchange_name, limit = wallet_limits[involved_wallet]
+        name, limit = wallet_limits[involved_wallet]
         if usd_amount < limit:
             return
 
@@ -130,7 +117,7 @@ async def handle_transfer(data, application):
             f"💰 {usd_amount:,.0f}$\n"
             f"👇 `{sender}`\n"
             f"👆 `{receiver}`\n"
-            f"📊 {arrow} ({exchange_name})\n"
+            f"📊 {arrow} ({name})\n"
             f"🔗 https://solscan.io/tx/{signature}"
         )
         await notify_users(msg, application)
@@ -141,7 +128,6 @@ async def webhook_handler(request):
     print("📥 Webhook получен")
     try:
         data = await request.json()
-        print(json.dumps(data, indent=2))
         request.app["bot_loop"].create_task(handle_transfer(data, request.app["application"]))
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
@@ -152,14 +138,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid != ADMIN_ID:
         await update.message.reply_text("⛔ Только админ может использовать этого бота.")
         return
-    try:
-        with open(USERS_FILE, "a+") as f:
-            f.seek(0)
-            if str(uid) not in f.read():
-                f.write(f"{uid}\n")
-        await update.message.reply_text("✅ Подписка активна.")
-    except:
-        pass
+    with open(USERS_FILE, "a+") as f:
+        f.seek(0)
+        if str(uid) not in f.read():
+            f.write(f"{uid}\n")
+    await update.message.reply_text("✅ Подписка активна.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
