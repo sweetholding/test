@@ -92,83 +92,60 @@ async def handle_transfer(data, application):
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
 
-                print(f"\n🔎 TOKEN: {symbol} | Mint: {mint}")
-                print(f"From: {sender}")
-                print(f"To: {receiver}")
-
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
-                    print("⛔ Пропущено: Stablecoin")
                     continue
 
-                amount_info = tr.get("tokenAmount")
-
-                if isinstance(amount_info, dict):
-                    raw_amount = amount_info.get("amount")
-                    decimals = amount_info.get("decimals", 6)
-                elif isinstance(amount_info, (int, float, str)):
-                    raw_amount = amount_info
-                    decimals = 0
-                else:
-                    print("⛔ Пропущено: Неподдерживаемый формат tokenAmount")
+                lamports = tr.get("nativeInput", {}).get("amount")
+                if lamports is None:
                     continue
 
-                try:
-                    token_amount = float(raw_amount) / (10 ** decimals)
-                except:
-                    print("⛔ Ошибка преобразования количества")
-                    continue
-
-                usd_amount = token_amount * sol_price
-                print(f"💸 USD amount: {usd_amount:.2f}")
+                sol_spent = lamports / 1_000_000_000
+                usd_amount = sol_spent * sol_price
 
                 direction = None
                 if sender in wallet_limits:
                     if usd_amount < wallet_limits[sender][1]:
-                        print("⛔ Пропущено: ниже лимита")
                         continue
-                    direction = f"⬅️ withdraw from ({wallet_limits[sender][0]})"
+                    direction = f"\ud83d\udec9 withdraw from ({wallet_limits[sender][0]})"
                 elif receiver in wallet_limits:
                     if usd_amount < wallet_limits[receiver][1]:
-                        print("⛔ Пропущено: ниже лимита")
                         continue
-                    direction = f"➡️ deposit to ({wallet_limits[receiver][0]})"
+                    direction = f"\ud83d\udec8 deposit to ({wallet_limits[receiver][0]})"
                 else:
-                    print("⛔ Пропущено: ни sender, ни receiver не в wallet_limits")
                     continue
 
                 msg = (
-                    f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
-                    f"💰 ~{usd_amount:,.2f}$ (по курсу SOL)\n"
-                    f"👇 `{sender}`\n"
-                    f"👆 `{receiver}`\n"
-                    f"📊 {direction}\n"
-                    f"🔗 https://solscan.io/tx/{signature}"
+                    f"*{symbol}* on Solana\n"
+                    f"\ud83d\udcb0 {usd_amount:,.2f}$\n"
+                    f"\ud83d\udee5 {sender}\n"
+                    f"\ud83d\udee4 {receiver}\n"
+                    f"\ud83d\udcca {direction}\n"
+                    f"\ud83d\udd17 https://solscan.io/tx/{signature}"
                 )
-                print("✅ Отправка сообщения...")
                 await notify_users(msg, application)
 
     except Exception as e:
         print(f"[handle_transfer error] {e}")
 
 async def webhook_handler(request):
-    print("📥 Webhook получен")
+    print("\ud83d\udce5 Webhook получен")
     try:
         data = await request.json()
         request.app["bot_loop"].create_task(handle_transfer(data, request.app["application"]))
     except Exception as e:
-        print(f"❌ Ошибка в webhook: {e}")
+        print(f"\u274c Ошибка в webhook: {e}")
     return web.Response(text="OK")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid != ADMIN_ID:
-        await update.message.reply_text("⛔ Только админ может использовать этого бота.")
+        await update.message.reply_text("\u26d4\ufe0f Только админ может использовать этого бота.")
         return
     with open(USERS_FILE, "a+") as f:
         f.seek(0)
         if str(uid) not in f.read():
             f.write(f"{uid}\n")
-    await update.message.reply_text("✅ Подписка активна.")
+    await update.message.reply_text("\u2705 Подписка активна.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
@@ -176,7 +153,7 @@ async def start_bot():
     webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
-    print(f"📡 Webhook установлен: {webhook_url}")
+    print(f"\ud83d\udce1 Webhook установлен: {webhook_url}")
     await app.start()
     web_app = web.Application()
     web_app["application"] = app
@@ -188,8 +165,8 @@ async def start_bot():
     port = int(os.environ.get("PORT", 8000))
     site = web.TCPSite(runner, port=port)
     await site.start()
-    print("🟢 Сервер запущен")
-    await notify_users("✅ Бот запущен и работает на Render.", app)
+    print("\ud83d\udfe2 Сервер запущен")
+    await notify_users("\u2705 Бот запущен и работает на Render.", app)
     while True:
         await asyncio.sleep(3600)
 
