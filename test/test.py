@@ -78,6 +78,7 @@ async def handle_transfer(data, application):
     try:
         if isinstance(data, list):
             data = data[0]
+        print("💡 Debug event data:", data)  # <--- ВАЖНО: добавлен лог
 
         signature = data.get("signature", "-")
         transfers = data.get("tokenTransfers", [])
@@ -141,6 +142,7 @@ async def handle_transfer(data, application):
         await notify_users(msg, application)
     except Exception as e:
         print(f"[handle_transfer error] {e}")
+
 
 async def webhook_handler(request):
     print("📥 Webhook получен")
