@@ -75,8 +75,14 @@ async def handle_transfer(data, application):
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
                     continue
 
-                ui_amount = tr.get("tokenAmount", {}).get("uiAmount")
-                price_per_token = tr.get("tokenPriceInfo", {}).get("pricePerToken")
+                token_amount = tr.get("tokenAmount")
+                price_info = tr.get("tokenPriceInfo")
+
+                if not isinstance(token_amount, dict) or not isinstance(price_info, dict):
+                    continue
+
+                ui_amount = token_amount.get("uiAmount")
+                price_per_token = price_info.get("pricePerToken")
 
                 if ui_amount is None or price_per_token is None:
                     continue
