@@ -76,21 +76,26 @@ async def handle_transfer(data, application):
                     continue
 
                 token_amount = tr.get("tokenAmount")
+                ui_amount = token_amount.get("uiAmount") if isinstance(token_amount, dict) else None
+
                 price_info = tr.get("tokenPriceInfo")
+                price_per_token = price_info.get("pricePerToken") if isinstance(price_info, dict) else None
 
-                if not isinstance(token_amount, dict) or not isinstance(price_info, dict):
-                    continue
+                usd_amount = None
+                if ui_amount and price_per_token:
+                    try:
+                        usd_amount = float(ui_amount) * float(price_per_token)
+                    except:
+                        usd_amount = None
+                elif tr.get("nativeInput") and isinstance(tr["nativeInput"], dict):
+                    sol_spent = tr["nativeInput"].get("amount")
+                    if sol_spent:
+                        sol_spent = float(sol_spent) / 1_000_000_000
+                        sol_price = 160  # можно заменить на функцию get_cached_sol_price()
+                        usd_amount = sol_spent * sol_price
 
-                ui_amount = token_amount.get("uiAmount")
-                price_per_token = price_info.get("pricePerToken")
-
-                if ui_amount is None or price_per_token is None:
-                    continue
-
-                try:
-                    usd_amount = float(ui_amount) * float(price_per_token)
-                except:
-                    continue
+                if usd_amount is None:
+                    usd_amount = 0
 
                 direction = None
                 if sender in wallet_limits:
