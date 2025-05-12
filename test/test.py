@@ -82,10 +82,7 @@ async def handle_transfer(data, application):
         for tx in data:
             signature = tx.get("signature", "-")
             transfers = tx.get("tokenTransfers", [])
-            account_data = tx.get("accountData", [])
-            events = tx.get("events", {})
 
-            # SPL Transfers
             for tr in transfers:
                 if not isinstance(tr, dict):
                     continue
@@ -93,61 +90,38 @@ async def handle_transfer(data, application):
                 symbol = tr.get("tokenSymbol", "SPL")
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
+
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
                     continue
+
                 amount_info = tr.get("tokenAmount", {})
-                if not isinstance(amount_info, dict):
+                raw_amount = amount_info.get("amount")
+                decimals = amount_info.get("decimals", 6)
+                if raw_amount is None:
                     continue
-                token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+
+                token_amount = float(raw_amount) / (10 ** decimals)
                 usd_amount = token_amount * sol_price
                 if usd_amount == 0:
                     continue
+
                 direction = None
                 if sender in wallet_limits:
-                    direction = f"⬅️ withdraw from ({wallet_limits[sender][0]})"
                     if usd_amount < wallet_limits[sender][1]:
                         continue
+                    direction = f"⬅️ withdraw from ({wallet_limits[sender][0]})"
                 elif receiver in wallet_limits:
-                    direction = f"➡️ deposit to ({wallet_limits[receiver][0]})"
                     if usd_amount < wallet_limits[receiver][1]:
                         continue
+                    direction = f"➡️ deposit to ({wallet_limits[receiver][0]})"
                 else:
                     continue
+
                 msg = (
                     f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
-                    f"💰 {usd_amount:,.0f}$\n"
+                    f"💰 ~{usd_amount:,.2f}$ (по курсу SOL)\n"
                     f"👇 `{sender}`\n"
                     f"👆 `{receiver}`\n"
-                    f"📊 {direction}\n"
-                    f"🔗 https://solscan.io/tx/{signature}"
-                )
-                await notify_users(msg, application)
-
-            # SOL Transfers
-            for entry in account_data:
-                if not isinstance(entry, dict):
-                    continue
-                native_change = entry.get("nativeBalanceChange", 0)
-                if not isinstance(native_change, (int, float)):
-                    continue
-                amount_sol = native_change / 1_000_000_000
-                usd_amount = abs(amount_sol * sol_price)
-                sender = entry.get("account", "-")
-                direction = None
-                if native_change < 0 and sender in wallet_limits:
-                    if usd_amount < wallet_limits[sender][1]:
-                        continue
-                    direction = f"⬅️ withdraw from ({wallet_limits[sender][0]})"
-                elif native_change > 0 and sender in wallet_limits:
-                    if usd_amount < wallet_limits[sender][1]:
-                        continue
-                    direction = f"➡️ deposit to ({wallet_limits[sender][0]})"
-                else:
-                    continue
-                msg = (
-                    f"🔍 SOL on Solana\n"
-                    f"💰 {usd_amount:,.0f}$\n"
-                    f"🧾 `{sender}`\n"
                     f"📊 {direction}\n"
                     f"🔗 https://solscan.io/tx/{signature}"
                 )
@@ -166,7 +140,6 @@ async def webhook_handler(request):
     return web.Response(text="OK")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"📥 Получена команда /start от {update.effective_user.id}")
     uid = update.effective_user.id
     if uid != ADMIN_ID:
         await update.message.reply_text("⛔ Только админ может использовать этого бота.")
@@ -175,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f.seek(0)
         if str(uid) not in f.read():
             f.write(f"{uid}\n")
-    await update.message.reply_text("✅ Подписка активна рендер.")
+    await update.message.reply_text("✅ Подписка активна.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
