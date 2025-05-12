@@ -74,84 +74,81 @@ async def notify_users(msg, application):
 
 async def handle_transfer(data, application):
     try:
-        if isinstance(data, list):
-            data = data[0]
+        if isinstance(data, dict):
+            data = [data]
 
         sol_price = await get_cached_sol_price()
-        signature = data.get("signature", "-")
-        transfers = data.get("tokenTransfers", [])
-        account_data = data.get("accountData", [])
 
-        if transfers:
+        for tx in data:
+            signature = tx.get("signature", "-")
+            transfers = tx.get("tokenTransfers", [])
+            account_data = tx.get("accountData", [])
+            events = tx.get("events", {})
+
+            # SPL Transfers
             for tr in transfers:
+                if not isinstance(tr, dict):
+                    continue
                 mint = tr.get("mint", "-")
                 symbol = tr.get("tokenSymbol", "SPL")
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
-
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
                     continue
-
                 amount_info = tr.get("tokenAmount", {})
+                if not isinstance(amount_info, dict):
+                    continue
                 token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
                 usd_amount = token_amount * sol_price
-
-                involved_wallet = None
+                if usd_amount == 0:
+                    continue
                 direction = None
-
                 if sender in wallet_limits:
-                    involved_wallet = sender
-                    direction = "⬅️ withdraw from"
+                    direction = f"⬅️ withdraw from ({wallet_limits[sender][0]})"
+                    if usd_amount < wallet_limits[sender][1]:
+                        continue
                 elif receiver in wallet_limits:
-                    involved_wallet = receiver
-                    direction = "➡️ deposit to"
+                    direction = f"➡️ deposit to ({wallet_limits[receiver][0]})"
+                    if usd_amount < wallet_limits[receiver][1]:
+                        continue
                 else:
                     continue
-
-                name, limit = wallet_limits[involved_wallet]
-                if usd_amount < limit:
-                    continue
-
-                token_info = f"{token_amount:,.2f} {symbol}"
                 msg = (
-                    f"🔍 {token_info} on Solana\n"
+                    f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
                     f"💰 {usd_amount:,.0f}$\n"
                     f"👇 `{sender}`\n"
                     f"👆 `{receiver}`\n"
-                    f"📊 {direction} ({name})\n"
+                    f"📊 {direction}\n"
                     f"🔗 https://solscan.io/tx/{signature}"
                 )
                 await notify_users(msg, application)
 
-        elif account_data:
+            # SOL Transfers
             for entry in account_data:
+                if not isinstance(entry, dict):
+                    continue
                 native_change = entry.get("nativeBalanceChange", 0)
+                if not isinstance(native_change, (int, float)):
+                    continue
                 amount_sol = native_change / 1_000_000_000
                 usd_amount = abs(amount_sol * sol_price)
                 sender = entry.get("account", "-")
-                symbol = "SOL"
-
-                involved_wallet = None
                 direction = None
-
                 if native_change < 0 and sender in wallet_limits:
-                    involved_wallet = sender
-                    direction = "⬅️ withdraw from"
+                    if usd_amount < wallet_limits[sender][1]:
+                        continue
+                    direction = f"⬅️ withdraw from ({wallet_limits[sender][0]})"
                 elif native_change > 0 and sender in wallet_limits:
-                    involved_wallet = sender
-                    direction = "➡️ deposit to"
+                    if usd_amount < wallet_limits[sender][1]:
+                        continue
+                    direction = f"➡️ deposit to ({wallet_limits[sender][0]})"
                 else:
                     continue
-
-                name, limit = wallet_limits[involved_wallet]
-                if usd_amount < limit:
-                    continue
-
                 msg = (
-                    f"🔍 {symbol} on Solana\n"
+                    f"🔍 SOL on Solana\n"
                     f"💰 {usd_amount:,.0f}$\n"
                     f"🧾 `{sender}`\n"
-                    f"📊 {direction} ({name})\n"
+                    f"📊 {direction}\n"
                     f"🔗 https://solscan.io/tx/{signature}"
                 )
                 await notify_users(msg, application)
@@ -182,30 +179,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
-
     webhook_path = "/telegram"
     webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
-
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
     print(f"📡 Webhook установлен: {webhook_url}")
     await app.start()
-
     web_app = web.Application()
     web_app["application"] = app
     web_app["bot_loop"] = asyncio.get_event_loop()
     web_app.router.add_post("/webhook", webhook_handler)
     web_app.router.add_post(webhook_path, webhook_handler)
-
     runner = web.AppRunner(web_app)
     await runner.setup()
     port = int(os.environ.get("PORT", 8000))
     site = web.TCPSite(runner, port=port)
     await site.start()
-
     print("🟢 Сервер запущен")
     await notify_users("✅ Бот запущен и работает на Render.", app)
-
     while True:
         await asyncio.sleep(3600)
 
