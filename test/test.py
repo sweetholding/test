@@ -13,10 +13,11 @@ USERS_FILE = "users.txt"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 
 sol_price_cache = {"price": None, "last_updated": 0}
+JUPITER_SWAP_LIMIT_USD = 100000
 
 STABLECOIN_MINTS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",  # USDT
     "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",
     "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",
     "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",
@@ -80,9 +81,35 @@ async def handle_transfer(data, application):
         signature = data.get("signature", "-")
         transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
+        events = data.get("events", {})
 
+        # 1. Jupiter Swap
+        if "jup" in events and events["jup"]:
+            jup_event = events["jup"]
+            in_token = jup_event.get("inputMint", "")
+            out_token = jup_event.get("outputMint", "")
+            in_amount = float(jup_event.get("inAmount", 0)) / (10 ** jup_event.get("inTokenAccountDecimals", 0))
+            out_amount = float(jup_event.get("outAmount", 0)) / (10 ** jup_event.get("outTokenAccountDecimals", 0))
+            user = jup_event.get("user", "-")
+
+            usd_amount_in = in_amount * sol_price
+            usd_amount_out = out_amount * sol_price
+
+            if max(usd_amount_in, usd_amount_out) >= JUPITER_SWAP_LIMIT_USD:
+                msg = (
+                    f"🔄 Jupiter Swap\n"
+                    f"🧾 User: `{user}`\n"
+                    f"🔁 {in_amount:,.2f} IN ({in_token}) ➡️ {out_amount:,.2f} OUT ({out_token})\n"
+                    f"💰 ${max(usd_amount_in, usd_amount_out):,.2f}\n"
+                    f"🔗 https://solscan.io/tx/{signature}"
+                )
+                await notify_users(msg, application)
+
+        # 2. tokenTransfers
         for tr in transfers:
             mint = tr.get("mint", "")
+            if mint in STABLECOIN_MINTS:
+                continue
             symbol = tr.get("tokenSymbol", "SPL")
             sender = tr.get("fromUserAccount", "-")
             receiver = tr.get("toUserAccount", "-")
@@ -104,7 +131,6 @@ async def handle_transfer(data, application):
                         f"🔗 https://solscan.io/tx/{signature}"
                     )
                     await notify_users(msg, application)
-
             elif receiver in wallet_limits:
                 name, limit = wallet_limits[receiver]
                 if usd_amount >= limit:
@@ -118,11 +144,51 @@ async def handle_transfer(data, application):
                     )
                     await notify_users(msg, application)
 
+        # 3. tokenBalanceChanges
+        for entry in account_data:
+            token_changes = entry.get("tokenBalanceChanges", [])
+            for token_change in token_changes:
+                mint = token_change.get("mint", "")
+                if mint in STABLECOIN_MINTS:
+                    continue
+                raw_amount = token_change.get("rawTokenAmount", {})
+                amount = int(raw_amount.get("tokenAmount", 0)) / (10 ** raw_amount.get("decimals", 0))
+                sender = token_change.get("userAccount", "-")
+                receiver = entry.get("account", "-")
+                usd_amount = amount * sol_price
+
+                if sender in wallet_limits:
+                    name, limit = wallet_limits[sender]
+                    if usd_amount >= limit:
+                        msg = (
+                            f"🔍 {amount:,.2f} SPL Token on Solana\n"
+                            f"💰 {usd_amount:,.2f}$\n"
+                            f"👇 `{sender}`\n"
+                            f"👆 `{receiver}`\n"
+                            f"📊 ⬅️ withdraw from ({name})\n"
+                            f"🔗 https://solscan.io/tx/{signature}"
+                        )
+                        await notify_users(msg, application)
+                elif receiver in wallet_limits:
+                    name, limit = wallet_limits[receiver]
+                    if usd_amount >= limit:
+                        msg = (
+                            f"🔍 {amount:,.2f} SPL Token on Solana\n"
+                            f"💰 {usd_amount:,.2f}$\n"
+                            f"👇 `{sender}`\n"
+                            f"👆 `{receiver}`\n"
+                            f"📊 ➡️ deposit to ({name})\n"
+                            f"🔗 https://solscan.io/tx/{signature}"
+                        )
+                        await notify_users(msg, application)
+
+        # 4. SOL transfers
         for entry in account_data:
             native_change = entry.get("nativeBalanceChange", 0)
             amount_sol = native_change / 1_000_000_000
             usd_amount = abs(amount_sol * sol_price)
             sender = entry.get("account", "-")
+
             if sender in wallet_limits:
                 name, limit = wallet_limits[sender]
                 if usd_amount >= limit:
@@ -157,7 +223,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f.seek(0)
         if str(uid) not in f.read():
             f.write(f"{uid}\n")
-    await update.message.reply_text("✅ Подписка активна рендер.")
+    await update.message.reply_text("✅ Подписка активна.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
