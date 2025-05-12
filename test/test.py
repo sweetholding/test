@@ -12,8 +12,6 @@ GROUP_CHAT_ID = -1002540099411
 USERS_FILE = "users.txt"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 
-sol_price_cache = {"price": None, "last_updated": 0}
-
 STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -48,12 +46,17 @@ async def get_token_price_usd(mint: str):
         "method": "getAsset",
         "params": {"id": mint}
     }
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {HELIUS_API_KEY}"}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {HELIUS_API_KEY}"
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 result = await resp.json()
-                return result["result"].get("priceInfo", {}).get("usdPrice", 0)
+                if isinstance(result, dict) and "result" in result:
+                    return result["result"].get("priceInfo", {}).get("usdPrice", 0)
+                return 0
     except Exception as e:
         print(f"❌ Ошибка при получении цены токена: {e}")
         return 0
@@ -78,7 +81,7 @@ async def handle_transfer(data, application):
     try:
         if isinstance(data, list):
             data = data[0]
-        print("💡 Debug event data:", data)  # <--- ВАЖНО: добавлен лог
+        print("💡 Debug event data:", data)
 
         signature = data.get("signature", "-")
         transfers = data.get("tokenTransfers", [])
@@ -98,7 +101,7 @@ async def handle_transfer(data, application):
                     return
 
                 amount_info = tr.get("tokenAmount", {})
-                token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+                token_amount = float(amount_info) if isinstance(amount_info, (int, float)) else float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
                 usd_price = await get_token_price_usd(mint)
                 usd_amount = token_amount * usd_price
                 break
@@ -142,7 +145,6 @@ async def handle_transfer(data, application):
         await notify_users(msg, application)
     except Exception as e:
         print(f"[handle_transfer error] {e}")
-
 
 async def webhook_handler(request):
     print("📥 Webhook получен")
