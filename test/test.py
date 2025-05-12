@@ -12,8 +12,7 @@ GROUP_CHAT_ID = -1002540099411
 USERS_FILE = "users.txt"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 
-token_price_cache = {}  # Кэш для цен токенов (включая SOL)
-unknown_tokens = set()  # Кэш для токенов, для которых цена недоступна
+sol_price_cache = {"price": None, "last_updated": 0}
 
 STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
@@ -32,7 +31,7 @@ wallet_limits = {
     "AC5RDfQFmDS1deWZos921JfqscXdByf8BKHs5ACWjtW2": ("bybit", 100000),
     "FpwQQhQQoEaVu3WU2qZMfF1hx48YyfwsLoRgXG83E99Q": ("coinbase", 100000),
     "ASTyfSima4LLAdDgoFGkgqoKowG1LZFDr9fAQrg7iaJZ": ("mex", 100000),
-    "FxteHmLwG9nk1eLNYsZTcqBFVyUVJ7BQ3tj56b2dcHzURkNfG": ("bitfinex", 100000),
+    "FxteHmLwG9nk1eL4pjNve3Eub2goGkkz6g6TbvdmW46a": ("bitfinex", 100000),
     "FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5": ("kraken", 100000),
     "BmFdpraQhkiDQE6SnfG5omcA1VwzqfXrwtNYBwWTymy6": ("kucoin", 100000),
     "C68a6RCGLiPskbPYtAcsCjhG8tfTWYcoB4JjCrXFdqyo": ("okx", 100000),
@@ -41,43 +40,21 @@ wallet_limits = {
 
 app = ApplicationBuilder().token(TOKEN).build()
 
-async def get_token_price(symbol, mint):
+async def get_cached_sol_price():
     now = time.time()
-    cache_key = mint  # Используем mint как ключ, так как он уникален
-
-    # Проверяем, известен ли токен как "неизвестный"
-    if cache_key in unknown_tokens:
-        return 0
-
-    # Проверяем кэш
-    if cache_key in token_price_cache and (now - token_price_cache[cache_key]["last_updated"] < 3600):
-        return token_price_cache[cache_key]["price"]
-
-    # Запрашиваем цену через Helius Token Price API
-    url = f"https://api.helius.xyz/v0/token-price?api-key={HELIUS_API_KEY}"
-    payload = {"mintAccounts": [mint]}
+    if sol_price_cache["price"] and (now - sol_price_cache["last_updated"] < 3600):
+        return sol_price_cache["price"]
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=10) as resp:
+            async with session.get(url, timeout=10) as resp:
                 data = await resp.json()
-                price_data = data.get("tokenPrices", [])
-                if price_data and len(price_data) > 0:
-                    price = price_data[0].get("price", 0)
-                    if price > 0:
-                        token_price_cache[cache_key] = {"price": price, "last_updated": now}
-                        return price
-                unknown_tokens.add(cache_key)
-                print(f"❌ Цена для токена {symbol} ({mint}) не найдена в Helius")
-                return 0
-    except Exception as e:
-        print(f"❌ Ошибка запроса цены для токена {symbol} ({mint}): {e}")
-        unknown_tokens.add(cache_key)
-        return 0
-
-async def get_cached_sol_price():
-    # Используем mint для SOL
-    sol_mint = "So11111111111111111111111111111111111111112"
-    return await get_token_price("SOL", sol_mint)
+                price = data["solana"]["usd"]
+                sol_price_cache["price"] = price
+                sol_price_cache["last_updated"] = now
+                return price
+    except:
+        return sol_price_cache["price"] or 0
 
 async def notify_users(msg, application):
     try:
@@ -123,9 +100,9 @@ async def handle_transfer(data, application):
                     return
 
                 amount_info = tr.get("tokenAmount", {})
-                token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
-                token_price = await get_token_price(symbol, mint)
-                usd_amount = token_amount * token_price if token_price > 0 else 0
+                token_amount = float(amount_info.get("uiAmount", 0))
+                token_price = tr.get("tokenPrice", sol_price)
+                usd_amount = token_amount * token_price
                 break
 
         elif account_data:
@@ -137,7 +114,7 @@ async def handle_transfer(data, application):
                 symbol = "SOL"
                 break
 
-        if usd_amount == 0 and not token_amount:
+        if usd_amount == 0:
             amount_raw = data.get("events", {}).get("nativeTransfer", {}).get("amount", 0)
             usd_amount = abs(amount_raw / 1_000_000_000 * sol_price)
 
@@ -151,7 +128,7 @@ async def handle_transfer(data, application):
             return
 
         name, limit = wallet_limits[involved_wallet]
-        if usd_amount < limit:  # Проверяем лимит для всех транзакций
+        if usd_amount < limit:
             return
 
         arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
