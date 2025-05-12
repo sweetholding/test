@@ -12,7 +12,6 @@ GROUP_CHAT_ID = -1002540099411
 USERS_FILE = "users.txt"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 
-STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",
@@ -102,10 +101,18 @@ async def handle_transfer(data, application):
                 if mint in STABLECOIN_MINTS:
                     return
 
+                usd_amount = tr.get("amount_in_usd", 0)
                 amount_info = tr.get("tokenAmount", {})
                 token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
-                token_price, symbol = await get_token_price_usd(mint)
-                usd_amount = token_amount * token_price
+
+                if usd_amount == 0:
+                    token_price, symbol = await get_token_price_usd(mint)
+                    if token_price == 0:
+                        return
+                    usd_amount = token_amount * token_price
+                else:
+                    _, symbol = await get_token_price_usd(mint)
+
                 break
 
         if usd_amount == 0:
@@ -129,13 +136,14 @@ async def handle_transfer(data, application):
 
         msg = (
             f"🔷 *{symbol}* on Solana\n"
-            f"💰 {usd_amount:,.0f}$\n"
+            f"💰 {usd_amount:,.2f}$\n"
             f"👇 `{sender}`\n"
             f"👆 `{receiver}`\n"
             f"📊 {arrow} ({name})\n"
             f"🔗 https://solscan.io/tx/{signature}"
         )
         await notify_users(msg, application)
+
     except Exception as e:
         print(f"[handle_transfer error] {e}")
 
