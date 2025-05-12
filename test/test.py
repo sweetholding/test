@@ -15,14 +15,14 @@ HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 sol_price_cache = {"price": None, "last_updated": 0}
 
 STABLECOIN_MINTS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
-    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",  # USDT
-    "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",  # USDH
-    "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",  # UXD
-    "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",  # DAI
-    "EaWXmTJEo9u3sxVcqBFVyUVJ7BQ3tj56b2dcHzURkNfG",  # USDP
-    "2QYdQ2Tz2wmu9Xc9e1KD1TV6koEbnKRTvnrpK21FyuTL",  # TUSD
-    "FR87nWEUxVgerFGhZM8Y4AggKGLnaXswr1Pd8wZ4kZcp"   # FRAX
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",
+    "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",
+    "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",
+    "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",
+    "EaWXmTJEo9u3sxVcqBFVyUVJ7BQ3tj56b2dcHzURkNfG",
+    "2QYdQ2Tz2wmu9Xc9e1KD1TV6koEbnKRTvnrpK21FyuTL",
+    "FR87nWEUxVgerFGhZM8Y4AggKGLnaXswr1Pd8wZ4kZcp"
 }
 
 wallet_limits = {
@@ -83,22 +83,21 @@ async def handle_transfer(data, application):
 
         for tr in transfers:
             mint = tr.get("mint", "")
-            if mint in STABLECOIN_MINTS:
-                continue
             symbol = tr.get("tokenSymbol", "SPL")
             sender = tr.get("fromUserAccount", "-")
             receiver = tr.get("toUserAccount", "-")
-            amount_info = tr.get("tokenAmount", {})
-            token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+            ui_info = tr.get("uiTokenAmount", {})
+            token_amount = float(ui_info.get("uiAmount", 0))
+            ui_price = float(ui_info.get("uiPrice", 0))
 
-            # Проверка адресов на присутствие в лимитах
+            usd_amount = token_amount * ui_price if ui_price else token_amount * sol_price
+
             if sender in wallet_limits:
                 name, limit = wallet_limits[sender]
-                usd_amount = token_amount * sol_price
                 if usd_amount >= limit:
                     msg = (
                         f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
-                        f"💰 {usd_amount:,.0f}$\n"
+                        f"💰 {usd_amount:,.2f}$\n"
                         f"👇 `{sender}`\n"
                         f"👆 `{receiver}`\n"
                         f"📊 ⬅️ withdraw from ({name})\n"
@@ -108,11 +107,10 @@ async def handle_transfer(data, application):
 
             elif receiver in wallet_limits:
                 name, limit = wallet_limits[receiver]
-                usd_amount = token_amount * sol_price
                 if usd_amount >= limit:
                     msg = (
                         f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
-                        f"💰 {usd_amount:,.0f}$\n"
+                        f"💰 {usd_amount:,.2f}$\n"
                         f"👇 `{sender}`\n"
                         f"👆 `{receiver}`\n"
                         f"📊 ➡️ deposit to ({name})\n"
@@ -132,7 +130,7 @@ async def handle_transfer(data, application):
                     msg = (
                         f"🔍 SOL on Solana\n"
                         f"💰 {usd_amount:,.0f}$\n"
-                        f"🧾 `{sender}`\n"
+                        f"📛 `{sender}`\n"
                         f"📊 {direction} ({name})\n"
                         f"🔗 https://solscan.io/tx/{signature}"
                     )
