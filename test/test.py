@@ -91,49 +91,44 @@ async def handle_transfer(data, application):
                 symbol = tr.get("tokenSymbol", "SPL")
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
-                amount_info = tr.get("tokenAmount", {})
-                raw_amount = amount_info.get("amount")
-                decimals = amount_info.get("decimals", 6)
 
-                print(f"\n🧪 [DEBUG SPL] TOKEN: {symbol} | Mint: {mint}")
+                print(f"\n🔎 TOKEN: {symbol} | Mint: {mint}")
                 print(f"From: {sender}")
                 print(f"To: {receiver}")
-                print(f"Raw amount: {raw_amount}")
-                print(f"Decimals: {decimals}")
-                print(f"Price SOL: {sol_price}")
 
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
                     print("⛔ Пропущено: Stablecoin")
                     continue
+
+                amount_info = tr.get("tokenAmount")
+                if not isinstance(amount_info, dict):
+                    print("⛔ Пропущено: tokenAmount не словарь")
+                    continue
+
+                raw_amount = amount_info.get("amount")
+                decimals = amount_info.get("decimals", 6)
                 if raw_amount is None:
-                    print("⛔ Пропущено: Нет amount")
+                    print("⛔ Пропущено: amount отсутствует")
                     continue
 
                 token_amount = float(raw_amount) / (10 ** decimals)
                 usd_amount = token_amount * sol_price
-                print(f"💸 Amount USD: {usd_amount}")
+                print(f"💸 USD amount: {usd_amount:.2f}")
 
-                if usd_amount == 0:
-                    print("⛔ Пропущено: USD amount = 0")
-                    continue
-
+                direction = None
                 if sender in wallet_limits:
-                    print(f"✅ Match sender {sender}")
                     if usd_amount < wallet_limits[sender][1]:
-                        print("⛔ Пропущено: Ниже лимита")
+                        print("⛔ Пропущено: ниже лимита")
                         continue
                     direction = f"⬅️ withdraw from ({wallet_limits[sender][0]})"
                 elif receiver in wallet_limits:
-                    print(f"✅ Match receiver {receiver}")
                     if usd_amount < wallet_limits[receiver][1]:
-                        print("⛔ Пропущено: Ниже лимита")
+                        print("⛔ Пропущено: ниже лимита")
                         continue
                     direction = f"➡️ deposit to ({wallet_limits[receiver][0]})"
                 else:
-                    print("⛔ Пропущено: Ни sender, ни receiver не в wallet_limits")
+                    print("⛔ Пропущено: ни sender, ни receiver не в wallet_limits")
                     continue
-
-                print("✅ Условия выполнены, отправляем сообщение")
 
                 msg = (
                     f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
@@ -143,6 +138,7 @@ async def handle_transfer(data, application):
                     f"📊 {direction}\n"
                     f"🔗 https://solscan.io/tx/{signature}"
                 )
+                print("✅ Отправка сообщения...")
                 await notify_users(msg, application)
 
     except Exception as e:
