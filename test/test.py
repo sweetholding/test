@@ -82,13 +82,6 @@ async def handle_transfer(data, application):
         transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
 
-        symbol = "SPL"
-        mint = "-"
-        sender = "-"
-        receiver = "-"
-        usd_amount = 0
-        token_amount = None
-
         if transfers:
             for tr in transfers:
                 mint = tr.get("mint", "-")
@@ -97,12 +90,38 @@ async def handle_transfer(data, application):
                 receiver = tr.get("toUserAccount", "-")
 
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
-                    return
+                    continue
 
                 amount_info = tr.get("tokenAmount", {})
                 token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
                 usd_amount = token_amount * sol_price
-                break
+
+                involved_wallet = None
+                direction = None
+
+                if sender in wallet_limits:
+                    involved_wallet = sender
+                    direction = "⬅️ withdraw from"
+                elif receiver in wallet_limits:
+                    involved_wallet = receiver
+                    direction = "➡️ deposit to"
+                else:
+                    continue
+
+                name, limit = wallet_limits[involved_wallet]
+                if usd_amount < limit:
+                    continue
+
+                token_info = f"{token_amount:,.2f} {symbol}"
+                msg = (
+                    f"🔍 {token_info} on Solana\n"
+                    f"💰 {usd_amount:,.0f}$\n"
+                    f"👇 `{sender}`\n"
+                    f"👆 `{receiver}`\n"
+                    f"📊 {direction} ({name})\n"
+                    f"🔗 https://solscan.io/tx/{signature}"
+                )
+                await notify_users(msg, application)
 
         elif account_data:
             for entry in account_data:
@@ -111,37 +130,32 @@ async def handle_transfer(data, application):
                 usd_amount = abs(amount_sol * sol_price)
                 sender = entry.get("account", "-")
                 symbol = "SOL"
-                break
 
-        if usd_amount == 0:
-            amount_raw = data.get("events", {}).get("nativeTransfer", {}).get("amount", 0)
-            usd_amount = abs(amount_raw / 1_000_000_000 * sol_price)
+                involved_wallet = None
+                direction = None
 
-        involved_wallet = None
-        for address in [sender, receiver]:
-            if address in wallet_limits:
-                involved_wallet = address
-                break
+                if native_change < 0 and sender in wallet_limits:
+                    involved_wallet = sender
+                    direction = "⬅️ withdraw from"
+                elif native_change > 0 and sender in wallet_limits:
+                    involved_wallet = sender
+                    direction = "➡️ deposit to"
+                else:
+                    continue
 
-        if not involved_wallet:
-            return
+                name, limit = wallet_limits[involved_wallet]
+                if usd_amount < limit:
+                    continue
 
-        name, limit = wallet_limits[involved_wallet]
-        if usd_amount < limit:
-            return
+                msg = (
+                    f"🔍 {symbol} on Solana\n"
+                    f"💰 {usd_amount:,.0f}$\n"
+                    f"🧾 `{sender}`\n"
+                    f"📊 {direction} ({name})\n"
+                    f"🔗 https://solscan.io/tx/{signature}"
+                )
+                await notify_users(msg, application)
 
-        arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
-        token_info = f"{token_amount:,.2f} {symbol}" if token_amount else symbol
-
-        msg = (
-            f"🔍 {token_info} on Solana\n"
-            f"💰 {usd_amount:,.0f}$\n"
-            f"👇 `{sender}`\n"
-            f"👆 `{receiver}`\n"
-            f"📊 {arrow} ({name})\n"
-            f"🔗 https://solscan.io/tx/{signature}"
-        )
-        await notify_users(msg, application)
     except Exception as e:
         print(f"[handle_transfer error] {e}")
 
