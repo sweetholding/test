@@ -12,18 +12,16 @@ GROUP_CHAT_ID = -1002540099411
 USERS_FILE = "users.txt"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 
-sol_price_cache = {"price": None, "last_updated": 0}
-JUPITER_SWAP_LIMIT_USD = 100000
-
+STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
-    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",  # USDT
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",
     "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",
     "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",
     "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",
     "EaWXmTJEo9u3sxVcqBFVyUVJ7BQ3tj56b2dcHzURkNfG",
     "2QYdQ2Tz2wmu9Xc9e1KD1TV6koEbnKRTvnrpK21FyuTL",
-    "FR87nWEUxVgerFGhZM8Y4AggKGLnaXswr1Pd8wZ4kZcp"
+    "FR87nWEUxVgerFGhZM8Y4AggKGLnaXswr1Pd8wZ4kZcp",
 }
 
 wallet_limits = {
@@ -39,22 +37,6 @@ wallet_limits = {
 }
 
 app = ApplicationBuilder().token(TOKEN).build()
-
-async def get_cached_sol_price():
-    now = time.time()
-    if sol_price_cache["price"] and (now - sol_price_cache["last_updated"] < 3600):
-        return sol_price_cache["price"]
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
-                data = await resp.json()
-                price = data["solana"]["usd"]
-                sol_price_cache["price"] = price
-                sol_price_cache["last_updated"] = now
-                return price
-    except:
-        return sol_price_cache["price"] or 0
 
 async def notify_users(msg, application):
     try:
@@ -72,136 +54,88 @@ async def notify_users(msg, application):
         except Exception as e:
             print(f"❌ Ошибка отправки пользователю {uid}: {e}")
 
+async def get_token_price_usd(mint_address):
+    url = "https://api.helius.xyz/v0/assets/search"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {HELIUS_API_KEY}"
+    }
+    payload = {
+        "creatorAddress": mint_address,
+        "tokenType": "fungible"
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
+                data = await resp.json()
+                if data and "result" in data and data["result"]:
+                    info = data["result"][0]
+                    price_info = info.get("price_info", {})
+                    price = float(price_info.get("price_per_token", 0))
+                    symbol = info.get("content", {}).get("metadata", {}).get("symbol", "SPL")
+                    return price, symbol
+    except Exception as e:
+        print(f"❌ Ошибка при получении цены токена: {e}")
+    return 0, "SPL"
+
 async def handle_transfer(data, application):
     try:
         if isinstance(data, list):
             data = data[0]
 
-        sol_price = await get_cached_sol_price()
         signature = data.get("signature", "-")
         transfers = data.get("tokenTransfers", [])
-        account_data = data.get("accountData", [])
-        events = data.get("events", {})
 
-        # 1. Jupiter Swap
-        if "jup" in events and events["jup"]:
-            jup_event = events["jup"]
-            in_token = jup_event.get("inputMint", "")
-            out_token = jup_event.get("outputMint", "")
-            in_amount = float(jup_event.get("inAmount", 0)) / (10 ** jup_event.get("inTokenAccountDecimals", 0))
-            out_amount = float(jup_event.get("outAmount", 0)) / (10 ** jup_event.get("outTokenAccountDecimals", 0))
-            user = jup_event.get("user", "-")
+        mint = "-"
+        sender = "-"
+        receiver = "-"
+        usd_amount = 0
+        token_amount = 0
+        symbol = "SPL"
 
-            usd_amount_in = in_amount * sol_price
-            usd_amount_out = out_amount * sol_price
+        if transfers:
+            for tr in transfers:
+                mint = tr.get("mint", "-")
+                sender = tr.get("fromUserAccount", "-")
+                receiver = tr.get("toUserAccount", "-")
 
-            if max(usd_amount_in, usd_amount_out) >= JUPITER_SWAP_LIMIT_USD:
-                msg = (
-                    f"🔄 Jupiter Swap\n"
-                    f"🧾 User: `{user}`\n"
-                    f"🔁 {in_amount:,.2f} IN ({in_token}) ➡️ {out_amount:,.2f} OUT ({out_token})\n"
-                    f"💰 ${max(usd_amount_in, usd_amount_out):,.2f}\n"
-                    f"🔗 https://solscan.io/tx/{signature}"
-                )
-                await notify_users(msg, application)
-
-        # 2. tokenTransfers
-        for tr in transfers:
-            mint = tr.get("mint", "")
-            if mint in STABLECOIN_MINTS:
-                continue
-            symbol = tr.get("tokenSymbol", "SPL")
-            sender = tr.get("fromUserAccount", "-")
-            receiver = tr.get("toUserAccount", "-")
-            ui_info = tr.get("uiTokenAmount", {})
-            token_amount = float(ui_info.get("uiAmount", 0))
-            ui_price = float(ui_info.get("uiPrice", 0))
-
-            usd_amount = token_amount * ui_price if ui_price else token_amount * sol_price
-
-            if sender in wallet_limits:
-                name, limit = wallet_limits[sender]
-                if usd_amount >= limit:
-                    msg = (
-                        f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
-                        f"💰 {usd_amount:,.2f}$\n"
-                        f"👇 `{sender}`\n"
-                        f"👆 `{receiver}`\n"
-                        f"📊 ⬅️ withdraw from ({name})\n"
-                        f"🔗 https://solscan.io/tx/{signature}"
-                    )
-                    await notify_users(msg, application)
-            elif receiver in wallet_limits:
-                name, limit = wallet_limits[receiver]
-                if usd_amount >= limit:
-                    msg = (
-                        f"🔍 {token_amount:,.2f} {symbol} on Solana\n"
-                        f"💰 {usd_amount:,.2f}$\n"
-                        f"👇 `{sender}`\n"
-                        f"👆 `{receiver}`\n"
-                        f"📊 ➡️ deposit to ({name})\n"
-                        f"🔗 https://solscan.io/tx/{signature}"
-                    )
-                    await notify_users(msg, application)
-
-        # 3. tokenBalanceChanges
-        for entry in account_data:
-            token_changes = entry.get("tokenBalanceChanges", [])
-            for token_change in token_changes:
-                mint = token_change.get("mint", "")
                 if mint in STABLECOIN_MINTS:
-                    continue
-                raw_amount = token_change.get("rawTokenAmount", {})
-                amount = int(raw_amount.get("tokenAmount", 0)) / (10 ** raw_amount.get("decimals", 0))
-                sender = token_change.get("userAccount", "-")
-                receiver = entry.get("account", "-")
-                usd_amount = amount * sol_price
+                    return
 
-                if sender in wallet_limits:
-                    name, limit = wallet_limits[sender]
-                    if usd_amount >= limit:
-                        msg = (
-                            f"🔍 {amount:,.2f} SPL Token on Solana\n"
-                            f"💰 {usd_amount:,.2f}$\n"
-                            f"👇 `{sender}`\n"
-                            f"👆 `{receiver}`\n"
-                            f"📊 ⬅️ withdraw from ({name})\n"
-                            f"🔗 https://solscan.io/tx/{signature}"
-                        )
-                        await notify_users(msg, application)
-                elif receiver in wallet_limits:
-                    name, limit = wallet_limits[receiver]
-                    if usd_amount >= limit:
-                        msg = (
-                            f"🔍 {amount:,.2f} SPL Token on Solana\n"
-                            f"💰 {usd_amount:,.2f}$\n"
-                            f"👇 `{sender}`\n"
-                            f"👆 `{receiver}`\n"
-                            f"📊 ➡️ deposit to ({name})\n"
-                            f"🔗 https://solscan.io/tx/{signature}"
-                        )
-                        await notify_users(msg, application)
+                amount_info = tr.get("tokenAmount", {})
+                token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+                token_price, symbol = await get_token_price_usd(mint)
+                usd_amount = token_amount * token_price
+                break
 
-        # 4. SOL transfers
-        for entry in account_data:
-            native_change = entry.get("nativeBalanceChange", 0)
-            amount_sol = native_change / 1_000_000_000
-            usd_amount = abs(amount_sol * sol_price)
-            sender = entry.get("account", "-")
+        if usd_amount == 0:
+            return
 
-            if sender in wallet_limits:
-                name, limit = wallet_limits[sender]
-                if usd_amount >= limit:
-                    direction = "➡️ deposit to" if native_change > 0 else "⬅️ withdraw from"
-                    msg = (
-                        f"🔍 SOL on Solana\n"
-                        f"💰 {usd_amount:,.0f}$\n"
-                        f"📛 `{sender}`\n"
-                        f"📊 {direction} ({name})\n"
-                        f"🔗 https://solscan.io/tx/{signature}"
-                    )
-                    await notify_users(msg, application)
+        involved_wallet = None
+        for address in [sender, receiver]:
+            if address in wallet_limits:
+                involved_wallet = address
+                break
 
+        if not involved_wallet:
+            return
+
+        name, limit = wallet_limits[involved_wallet]
+        if usd_amount < limit:
+            return
+
+        arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
+        token_info = f"{token_amount:,.2f} {symbol}"
+
+        msg = (
+            f"🔷 *{symbol}* on Solana\n"
+            f"💰 {usd_amount:,.0f}$\n"
+            f"👇 `{sender}`\n"
+            f"👆 `{receiver}`\n"
+            f"📊 {arrow} ({name})\n"
+            f"🔗 https://solscan.io/tx/{signature}"
+        )
+        await notify_users(msg, application)
     except Exception as e:
         print(f"[handle_transfer error] {e}")
 
@@ -215,6 +149,7 @@ async def webhook_handler(request):
     return web.Response(text="OK")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"📥 Получена команда /start от {update.effective_user.id}")
     uid = update.effective_user.id
     if uid != ADMIN_ID:
         await update.message.reply_text("⛔ Только админ может использовать этого бота.")
@@ -227,10 +162,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
+
     webhook_path = "/telegram"
     webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
+
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
+    print(f"📡 Webhook установлен: {webhook_url}")
     await app.start()
 
     web_app = web.Application()
@@ -245,7 +183,9 @@ async def start_bot():
     site = web.TCPSite(runner, port=port)
     await site.start()
 
+    print("🟢 Сервер запущен")
     await notify_users("✅ Бот запущен и работает на Render.", app)
+
     while True:
         await asyncio.sleep(3600)
 
