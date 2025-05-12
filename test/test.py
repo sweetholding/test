@@ -101,17 +101,23 @@ async def handle_transfer(data, application):
                     continue
 
                 amount_info = tr.get("tokenAmount")
-                if not isinstance(amount_info, dict):
-                    print("⛔ Пропущено: tokenAmount не словарь")
+
+                if isinstance(amount_info, dict):
+                    raw_amount = amount_info.get("amount")
+                    decimals = amount_info.get("decimals", 6)
+                elif isinstance(amount_info, (int, float, str)):
+                    raw_amount = amount_info
+                    decimals = 0
+                else:
+                    print("⛔ Пропущено: Неподдерживаемый формат tokenAmount")
                     continue
 
-                raw_amount = amount_info.get("amount")
-                decimals = amount_info.get("decimals", 6)
-                if raw_amount is None:
-                    print("⛔ Пропущено: amount отсутствует")
+                try:
+                    token_amount = float(raw_amount) / (10 ** decimals)
+                except:
+                    print("⛔ Ошибка преобразования количества")
                     continue
 
-                token_amount = float(raw_amount) / (10 ** decimals)
                 usd_amount = token_amount * sol_price
                 print(f"💸 USD amount: {usd_amount:.2f}")
 
