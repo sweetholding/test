@@ -95,8 +95,12 @@ async def handle_transfer(data, application):
                 if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
                     continue
 
-                lamports = tr.get("nativeInput", {}).get("amount")
-                if lamports is None:
+                native_input = tr.get("nativeInput")
+                if not isinstance(native_input, dict):
+                    continue
+
+                lamports = native_input.get("amount")
+                if not isinstance(lamports, (int, float)):
                     continue
 
                 sol_spent = lamports / 1_000_000_000
@@ -106,21 +110,21 @@ async def handle_transfer(data, application):
                 if sender in wallet_limits:
                     if usd_amount < wallet_limits[sender][1]:
                         continue
-                    direction = f"\ud83d\udec9 withdraw from ({wallet_limits[sender][0]})"
+                    direction = f"📤 withdraw from ({wallet_limits[sender][0]})"
                 elif receiver in wallet_limits:
                     if usd_amount < wallet_limits[receiver][1]:
                         continue
-                    direction = f"\ud83d\udec8 deposit to ({wallet_limits[receiver][0]})"
+                    direction = f"📥 deposit to ({wallet_limits[receiver][0]})"
                 else:
                     continue
 
                 msg = (
-                    f"*{symbol}* on Solana\n"
-                    f"\ud83d\udcb0 {usd_amount:,.2f}$\n"
-                    f"\ud83d\udee5 {sender}\n"
-                    f"\ud83d\udee4 {receiver}\n"
-                    f"\ud83d\udcca {direction}\n"
-                    f"\ud83d\udd17 https://solscan.io/tx/{signature}"
+                    f"{symbol} on Solana\n"
+                    f"💰 {usd_amount:,.2f}$\n"
+                    f"📤 `{sender}`\n"
+                    f"📥 `{receiver}`\n"
+                    f"📊 {direction}\n"
+                    f"🔗 https://solscan.io/tx/{signature}"
                 )
                 await notify_users(msg, application)
 
@@ -128,24 +132,24 @@ async def handle_transfer(data, application):
         print(f"[handle_transfer error] {e}")
 
 async def webhook_handler(request):
-    print("\ud83d\udce5 Webhook получен")
+    print("📥 Webhook получен")
     try:
         data = await request.json()
         request.app["bot_loop"].create_task(handle_transfer(data, request.app["application"]))
     except Exception as e:
-        print(f"\u274c Ошибка в webhook: {e}")
+        print(f"❌ Ошибка в webhook: {e}")
     return web.Response(text="OK")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid != ADMIN_ID:
-        await update.message.reply_text("\u26d4\ufe0f Только админ может использовать этого бота.")
+        await update.message.reply_text("⛔ Только админ может использовать этого бота.")
         return
     with open(USERS_FILE, "a+") as f:
         f.seek(0)
         if str(uid) not in f.read():
             f.write(f"{uid}\n")
-    await update.message.reply_text("\u2705 Подписка активна.")
+    await update.message.reply_text("✅ Подписка активна.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
@@ -153,7 +157,7 @@ async def start_bot():
     webhook_url = f"https://test-dvla.onrender.com{webhook_path}"
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
-    print(f"\ud83d\udce1 Webhook установлен: {webhook_url}")
+    print(f"📡 Webhook установлен: {webhook_url}")
     await app.start()
     web_app = web.Application()
     web_app["application"] = app
@@ -165,8 +169,8 @@ async def start_bot():
     port = int(os.environ.get("PORT", 8000))
     site = web.TCPSite(runner, port=port)
     await site.start()
-    print("\ud83d\udfe2 Сервер запущен")
-    await notify_users("\u2705 Бот запущен и работает на Render.", app)
+    print("🟢 Сервер запущен")
+    await notify_users("✅ Бот запущен и работает на Render.", app)
     while True:
         await asyncio.sleep(3600)
 
