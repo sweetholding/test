@@ -40,21 +40,23 @@ wallet_limits = {
 
 app = ApplicationBuilder().token(TOKEN).build()
 
-async def get_cached_sol_price():
-    now = time.time()
-    if sol_price_cache["price"] and (now - sol_price_cache["last_updated"] < 3600):
-        return sol_price_cache["price"]
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+async def get_token_price_usd(mint: str):
+    url = "https://mainnet.helius-rpc.com/"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "getAsset",
+        "params": {"id": mint}
+    }
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {HELIUS_API_KEY}"}
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
-                data = await resp.json()
-                price = data["solana"]["usd"]
-                sol_price_cache["price"] = price
-                sol_price_cache["last_updated"] = now
-                return price
-    except:
-        return sol_price_cache["price"] or 0
+            async with session.post(url, json=payload, headers=headers) as resp:
+                result = await resp.json()
+                return result["result"].get("priceInfo", {}).get("usdPrice", 0)
+    except Exception as e:
+        print(f"❌ Ошибка при получении цены токена: {e}")
+        return 0
 
 async def notify_users(msg, application):
     try:
@@ -77,17 +79,12 @@ async def handle_transfer(data, application):
         if isinstance(data, list):
             data = data[0]
 
-        sol_price = await get_cached_sol_price()
         signature = data.get("signature", "-")
         transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
 
-        symbol = "SPL"
-        mint = "-"
-        sender = "-"
-        receiver = "-"
-        usd_amount = 0
-        token_amount = None
+        symbol, mint, sender, receiver = "-", "-", "-", "-"
+        usd_amount, token_amount = 0, None
 
         if transfers:
             for tr in transfers:
@@ -100,23 +97,25 @@ async def handle_transfer(data, application):
                     return
 
                 amount_info = tr.get("tokenAmount", {})
-                token_amount = float(amount_info.get("uiAmount", 0))
-                token_price = tr.get("tokenPrice", sol_price)
-                usd_amount = token_amount * token_price
+                token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+                usd_price = await get_token_price_usd(mint)
+                usd_amount = token_amount * usd_price
                 break
 
         elif account_data:
             for entry in account_data:
                 native_change = entry.get("nativeBalanceChange", 0)
                 amount_sol = native_change / 1_000_000_000
+                sol_price = await get_token_price_usd("So11111111111111111111111111111111111111112")
                 usd_amount = abs(amount_sol * sol_price)
                 sender = entry.get("account", "-")
                 symbol = "SOL"
                 break
 
         if usd_amount == 0:
-            amount_raw = data.get("events", {}).get("nativeTransfer", {}).get("amount", 0)
-            usd_amount = abs(amount_raw / 1_000_000_000 * sol_price)
+            native_amt = data.get("events", {}).get("nativeTransfer", {}).get("amount", 0)
+            sol_price = await get_token_price_usd("So11111111111111111111111111111111111111112")
+            usd_amount = abs(native_amt / 1_000_000_000 * sol_price)
 
         involved_wallet = None
         for address in [sender, receiver]:
@@ -124,22 +123,19 @@ async def handle_transfer(data, application):
                 involved_wallet = address
                 break
 
-        if not involved_wallet:
+        if not involved_wallet or usd_amount < wallet_limits[involved_wallet][1]:
             return
 
-        name, limit = wallet_limits[involved_wallet]
-        if usd_amount < limit:
-            return
-
-        arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
+        name = wallet_limits[involved_wallet][0]
+        direction = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
         token_info = f"{token_amount:,.2f} {symbol}" if token_amount else symbol
 
         msg = (
             f"🔍 {token_info} on Solana\n"
             f"💰 {usd_amount:,.0f}$\n"
-            f"👇 `{sender}`\n"
-            f"👆 `{receiver}`\n"
-            f"📊 {arrow} ({name})\n"
+            f"👇 {sender}\n"
+            f"👆 {receiver}\n"
+            f"📊 {direction} ({name})\n"
             f"🔗 https://solscan.io/tx/{signature}"
         )
         await notify_users(msg, application)
@@ -165,7 +161,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f.seek(0)
         if str(uid) not in f.read():
             f.write(f"{uid}\n")
-    await update.message.reply_text("✅ Подписка активна рендер.")
+    await update.message.reply_text("✅ Подписка активна.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
