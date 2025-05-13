@@ -17,8 +17,8 @@ price_cache = {}
 
 STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",  # USDT
     "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",
     "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",
     "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",
@@ -111,11 +111,12 @@ async def handle_transfer(data, application):
         if transfers:
             for tr in transfers:
                 mint = tr.get("mint", "-")
-                symbol = tr.get("tokenSymbol", "SPL")
+                symbol = tr.get("tokenSymbol") or "SPL"
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
 
-                if symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
+                if symbol.upper() == "SOL" or symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
+                    print(f"[SKIP] Пропуск токена {symbol}")
                     return
 
                 amount_info = tr.get("tokenAmount", {})
@@ -143,6 +144,7 @@ async def handle_transfer(data, application):
                 usd_amount = abs(amount_sol * sol_price)
                 sender = entry.get("account", "-")
                 symbol = "SOL"
+                return  # ❗ исключаем SOL
                 break
 
         if usd_amount == 0:
@@ -163,7 +165,7 @@ async def handle_transfer(data, application):
             return
 
         arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
-        token_info = f"{token_amount:,.2f} {symbol}" if token_amount else symbol
+        token_info = f"{symbol}"
 
         msg = (
             f"🔍 {token_info} on Solana\n"
