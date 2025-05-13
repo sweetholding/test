@@ -60,6 +60,7 @@ async def get_cached_sol_price():
 async def get_token_price_in_usdc(mint):
     now = time.time()
     if mint in price_cache and now - price_cache[mint]["ts"] < 180:
+        print(f"[CACHE] Mint: {mint} -> {price_cache[mint]['price']}$")
         return price_cache[mint]["price"]
     url = f"https://quote-api.jup.ag/v6/quote?inputMint={mint}&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000&slippageBps=100"
     try:
@@ -68,9 +69,10 @@ async def get_token_price_in_usdc(mint):
                 data = await resp.json()
                 price = float(data["outAmount"]) / 10**6
                 price_cache[mint] = {"price": price, "ts": now}
+                print(f"[JUPITER] Mint: {mint}, Цена: {price}$")
                 return price
     except Exception as e:
-        print(f"[Jupiter price error] {e}")
+        print(f"[JUPITER ERROR] mint: {mint}, error: {e}")
         return None
 
 async def notify_users(msg, application):
@@ -120,8 +122,10 @@ async def handle_transfer(data, application):
                 token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
                 token_price = await get_token_price_in_usdc(mint)
                 if not token_price:
+                    print(f"[DEBUG] Пропуск — не удалось получить цену для {mint}")
                     return
                 usd_amount = token_amount * token_price
+                print(f"[DEBUG] token={symbol} mint={mint} amount={token_amount:.2f} price={token_price}$ usd={usd_amount}$")
                 break
 
         elif account_data:
