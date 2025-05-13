@@ -121,8 +121,11 @@ async def handle_transfer(data, application):
                 amount_info = tr.get("tokenAmount", {})
                 if isinstance(amount_info, dict):
                     token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+                elif isinstance(amount_info, (float, int)):
+                    token_amount = float(amount_info)
+                    print(f"[INFO] tokenAmount уже готов: {token_amount}")
                 else:
-                    print(f"[ERROR] tokenAmount не dict: {amount_info}")
+                    print(f"[ERROR] Неизвестный формат tokenAmount: {amount_info}")
                     return
 
                 token_price = await get_token_price_in_usdc(mint)
