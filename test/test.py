@@ -12,6 +12,9 @@ GROUP_CHAT_ID = -1002540099411
 USERS_FILE = "users.txt"
 HELIUS_API_KEY = "8f1ab601-c0db-4aec-aa03-578c8f5a52fa"
 
+sol_price_cache = {"price": None, "last_updated": 0}
+price_cache = {}
+
 STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -38,28 +41,37 @@ wallet_limits = {
 
 app = ApplicationBuilder().token(TOKEN).build()
 
-async def get_token_price_usd(mint: str):
-    url = "https://mainnet.helius-rpc.com/"
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "getAsset",
-        "params": {"id": mint}
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {HELIUS_API_KEY}"
-    }
+async def get_cached_sol_price():
+    now = time.time()
+    if sol_price_cache["price"] and (now - sol_price_cache["last_updated"] < 3600):
+        return sol_price_cache["price"]
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                result = await resp.json()
-                if isinstance(result, dict) and "result" in result:
-                    return result["result"].get("priceInfo", {}).get("usdPrice", 0)
-                return 0
+            async with session.get(url, timeout=10) as resp:
+                data = await resp.json()
+                price = data["solana"]["usd"]
+                sol_price_cache["price"] = price
+                sol_price_cache["last_updated"] = now
+                return price
+    except:
+        return sol_price_cache["price"] or 0
+
+async def get_token_price_in_usdc(mint):
+    now = time.time()
+    if mint in price_cache and now - price_cache[mint]["ts"] < 180:
+        return price_cache[mint]["price"]
+    url = f"https://quote-api.jup.ag/v6/quote?inputMint={mint}&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000&slippageBps=100"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                data = await resp.json()
+                price = float(data["outAmount"]) / 10**6
+                price_cache[mint] = {"price": price, "ts": now}
+                return price
     except Exception as e:
-        print(f"❌ Ошибка при получении цены токена: {e}")
-        return 0
+        print(f"[Jupiter price error] {e}")
+        return None
 
 async def notify_users(msg, application):
     try:
@@ -81,14 +93,18 @@ async def handle_transfer(data, application):
     try:
         if isinstance(data, list):
             data = data[0]
-        print("💡 Debug event data:", data)
 
+        sol_price = await get_cached_sol_price()
         signature = data.get("signature", "-")
         transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
 
-        symbol, mint, sender, receiver = "-", "-", "-", "-"
-        usd_amount, token_amount = 0, None
+        symbol = "SPL"
+        mint = "-"
+        sender = "-"
+        receiver = "-"
+        usd_amount = 0
+        token_amount = None
 
         if transfers:
             for tr in transfers:
@@ -101,25 +117,25 @@ async def handle_transfer(data, application):
                     return
 
                 amount_info = tr.get("tokenAmount", {})
-                token_amount = float(amount_info) if isinstance(amount_info, (int, float)) else float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
-                usd_price = await get_token_price_usd(mint)
-                usd_amount = token_amount * usd_price
+                token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
+                token_price = await get_token_price_in_usdc(mint)
+                if not token_price:
+                    return
+                usd_amount = token_amount * token_price
                 break
 
         elif account_data:
             for entry in account_data:
                 native_change = entry.get("nativeBalanceChange", 0)
                 amount_sol = native_change / 1_000_000_000
-                sol_price = await get_token_price_usd("So11111111111111111111111111111111111111112")
                 usd_amount = abs(amount_sol * sol_price)
                 sender = entry.get("account", "-")
                 symbol = "SOL"
                 break
 
         if usd_amount == 0:
-            native_amt = data.get("events", {}).get("nativeTransfer", {}).get("amount", 0)
-            sol_price = await get_token_price_usd("So11111111111111111111111111111111111111112")
-            usd_amount = abs(native_amt / 1_000_000_000 * sol_price)
+            amount_raw = data.get("events", {}).get("nativeTransfer", {}).get("amount", 0)
+            usd_amount = abs(amount_raw / 1_000_000_000 * sol_price)
 
         involved_wallet = None
         for address in [sender, receiver]:
@@ -127,19 +143,22 @@ async def handle_transfer(data, application):
                 involved_wallet = address
                 break
 
-        if not involved_wallet or usd_amount < wallet_limits[involved_wallet][1]:
+        if not involved_wallet:
             return
 
-        name = wallet_limits[involved_wallet][0]
-        direction = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
+        name, limit = wallet_limits[involved_wallet]
+        if usd_amount < limit:
+            return
+
+        arrow = "⬅️ withdraw from" if receiver not in wallet_limits else "➡️ deposit to"
         token_info = f"{token_amount:,.2f} {symbol}" if token_amount else symbol
 
         msg = (
             f"🔍 {token_info} on Solana\n"
             f"💰 {usd_amount:,.0f}$\n"
-            f"👇 {sender}\n"
-            f"👆 {receiver}\n"
-            f"📊 {direction} ({name})\n"
+            f"👇 `{sender}`\n"
+            f"👆 `{receiver}`\n"
+            f"📊 {arrow} ({name})\n"
             f"🔗 https://solscan.io/tx/{signature}"
         )
         await notify_users(msg, application)
@@ -165,7 +184,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f.seek(0)
         if str(uid) not in f.read():
             f.write(f"{uid}\n")
-    await update.message.reply_text("✅ Подписка активна.")
+    await update.message.reply_text("✅ Подписка активна рендер.")
 
 async def start_bot():
     app.add_handler(CommandHandler("start", start))
