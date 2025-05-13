@@ -17,8 +17,8 @@ price_cache = {}
 
 STABLECOINS = {"USDC", "USDT", "USDH", "UXD", "DAI", "USDP", "TUSD", "FRAX"}
 STABLECOIN_MINTS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
-    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",  # USDT
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "Es9vMFrzaCERCLztnttdr5YwUXrjbsLkxkMtFvY7kKfM",
     "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT",
     "E8u5Vp3xwPRdRzxrBrPLowGEXRJnLUxbJMc1oFn4nqEa",
     "FZ8d3D8gaEj1eLNYsZTcq7Nh8hhCXi2GsN5D9YXcRJ8L",
@@ -75,6 +75,25 @@ async def get_token_price_in_usdc(mint):
         print(f"[JUPITER ERROR] mint: {mint}, error: {e}")
         return None
 
+async def get_token_symbol_from_helius(mint):
+    url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "getAsset",
+        "params": {"id": mint}
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=10) as resp:
+                data = await resp.json()
+                symbol = data.get("result", {}).get("content", {}).get("metadata", {}).get("symbol")
+                if symbol:
+                    return symbol.upper()
+    except Exception as e:
+        print(f"[HELIUS getAsset ERROR] mint={mint}: {e}")
+    return "UNKNOWN"
+
 async def notify_users(msg, application):
     try:
         await application.bot.send_message(chat_id=GROUP_CHAT_ID, text=msg, parse_mode="Markdown")
@@ -101,8 +120,8 @@ async def handle_transfer(data, application):
         transfers = data.get("tokenTransfers", [])
         account_data = data.get("accountData", [])
 
-        symbol = "SPL"
         mint = "-"
+        symbol = "SPL"
         sender = "-"
         receiver = "-"
         usd_amount = 0
@@ -111,9 +130,10 @@ async def handle_transfer(data, application):
         if transfers:
             for tr in transfers:
                 mint = tr.get("mint", "-")
-                symbol = tr.get("tokenSymbol") or "SPL"
                 sender = tr.get("fromUserAccount", "-")
                 receiver = tr.get("toUserAccount", "-")
+
+                symbol = await get_token_symbol_from_helius(mint)
 
                 if symbol.upper() == "SOL" or symbol.upper() in STABLECOINS or mint in STABLECOIN_MINTS:
                     print(f"[SKIP] Пропуск токена {symbol}")
@@ -124,7 +144,6 @@ async def handle_transfer(data, application):
                     token_amount = float(amount_info.get("tokenAmount", 0)) / (10 ** amount_info.get("decimals", 6))
                 elif isinstance(amount_info, (float, int)):
                     token_amount = float(amount_info)
-                    print(f"[INFO] tokenAmount уже готов: {token_amount}")
                 else:
                     print(f"[ERROR] Неизвестный формат tokenAmount: {amount_info}")
                     return
@@ -144,7 +163,7 @@ async def handle_transfer(data, application):
                 usd_amount = abs(amount_sol * sol_price)
                 sender = entry.get("account", "-")
                 symbol = "SOL"
-                return  # ❗ исключаем SOL
+                return  # не логируем SOL
                 break
 
         if usd_amount == 0:
